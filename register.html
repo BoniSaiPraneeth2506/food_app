@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Online Food Delivery Website</title>
+    <title>Register - Online Food Delivery Website</title>
     <!-- Favicon -->
     <link rel="shortcut icon" href="img/favicon.ico" type="image/x-icon">
     <!-- Fontawesome CSS -->
@@ -34,55 +34,6 @@
                         <li><a class="hvr-underline-from-center" href="order.html">Order</a></li>
                         <li><a class="hvr-underline-from-center" href="contact.html">Contact</a></li>
                         <li><a class="hvr-underline-from-center" href="login.html">Login</a></li>
-                        <li>
-                            <a id="shopping-cart" class="shopping-cart">
-                                <i class="fa fa-cart-arrow-down"></i>
-                                <span class="badge">4</span>
-                            </a>
-                            <div id="cart-content" class="cart-content">
-                                <h3 class="text-center">Shopping Cart</h3>
-                                <table class="cart-table" border="0">
-                                    <tr>
-                                        <th>Food</th>
-                                        <th>Name</th>
-                                        <th>Price</th>
-                                        <th>Qty</th>
-                                        <th>Total</th>
-                                        <th>Action</th>
-                                    </tr>
-                                    <tr>
-                                        <td><img src="img/food/p1.jpg" alt="Food"></td>
-                                        <td>Pizza</td>
-                                        <td>$ 8.00</td>
-                                        <td>1</td>
-                                        <td>$ 8.00</td>
-                                        <td><a href="#" class="btn-delete">&times;</a></td>
-                                    </tr>
-                                    <tr>
-                                        <td><img src="img/food/s1.jpg" alt="Food"></td>
-                                        <td>Sandwich</td>
-                                        <td>$ 8.00</td>
-                                        <td>1</td>
-                                        <td>$ 8.00</td>
-                                        <td><a href="#" class="btn-delete">&times;</a></td>
-                                    </tr>
-                                    <tr>
-                                        <td><img src="img/food/b1.jpg" alt="Food"></td>
-                                        <td>Burder</td>
-                                        <td>$ 8.00</td>
-                                        <td>1</td>
-                                        <td>$ 8.00</td>
-                                        <td><a href="#" class="btn-delete">&times;</a></td>
-                                    </tr>
-                                    <tr>
-                                        <th colspan="4">Total</th>
-                                        <th>$24.00$</th>
-                                        <th></th>
-                                    </tr>
-                                </table>
-                                <a href="order.html" class="btn-primary">Confirm Order</a>
-                            </div>
-                        </li>
                     </ul>
                 </div>
             </div>
@@ -90,28 +41,36 @@
     </header>
     <!-- Navigation Section End -->
 
-    <!-- Login Section Start -->
+    <!-- Register Section Start -->
     <section class="login">
         <div class="container">
-            <h2 class="text-center">Login</h2>
+            <h2 class="text-center">Register</h2>
             <div class="heading-border"></div>
 
-            <form action="" class="form">
+            <form id="registerForm" class="form">
                 <fieldset>
-                    <legend>Login</legend>
+                    <legend>Create Account</legend>
+                    <p class="label">Full Name</p>
+                    <input type="text" name="name" placeholder="Enter your full name..." required>
                     <p class="label">Email</p>
-                    <input type="email" placeholder="Enter your email..." required>
+                    <input type="email" name="email" placeholder="Enter your email..." required>
+                    <p class="label">Phone</p>
+                    <input type="tel" name="phone" placeholder="Enter your phone number..." required>
+                    <p class="label">Address</p>
+                    <input type="text" name="address" placeholder="Enter your address..." required>
                     <p class="label">Password</p>
-                    <input type="password" placeholder="Enter your password..." required>
-                    <input type="submit" value="Login" class="btn-primary">
+                    <input type="password" name="password" placeholder="Enter your password..." required>
+                    <p class="label">Confirm Password</p>
+                    <input type="password" name="confirmPassword" placeholder="Confirm your password..." required>
+                    <input type="submit" value="Register" class="btn-primary">
                     <p class="text-center" style="margin-top: 15px;">
-                        Don't have an account? <a href="register.html">Register here</a>
+                        Already have an account? <a href="login.html">Login here</a>
                     </p>
                 </fieldset>
             </form>
         </div>
     </section>
-    <!-- Login Section End -->
+    <!-- Register Section End -->
 
     <!-- Footer Section Start -->
     <section class="footer">
@@ -169,5 +128,49 @@
     <script src="js/auth.js"></script>
     <!-- Custom JS -->
     <script src="js/custom.js"></script>
+    
+    <script>
+        document.getElementById('registerForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const userData = {
+                name: formData.get('name'),
+                email: formData.get('email'),
+                phone: formData.get('phone'),
+                address: formData.get('address'),
+                password: formData.get('password')
+            };
+            
+            const confirmPassword = formData.get('confirmPassword');
+            
+            if (userData.password !== confirmPassword) {
+                showNotification('Passwords do not match', 'error');
+                return;
+            }
+            
+            try {
+                const result = await API.register(userData);
+                
+                if (result.error) {
+                    showNotification(result.error, 'error');
+                    return;
+                }
+                
+                AuthUtils.setToken(result.token);
+                AuthUtils.setUser(result.user);
+                
+                showNotification('Registration successful!', 'success');
+                
+                setTimeout(() => {
+                    window.location.href = 'index.html';
+                }, 1000);
+                
+            } catch (error) {
+                console.error('Registration error:', error);
+                showNotification('Registration failed. Please try again.', 'error');
+            }
+        });
+    </script>
 </body>
 </html>
