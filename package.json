@@ -8,18 +8,24 @@
     "start": "node server/server.js",
     "dev": "nodemon server/server.js"
   },
-  "keywords": ["food", "ordering", "restaurant", "delivery", "mongodb"],
+  "keywords": [
+    "food",
+    "ordering",
+    "restaurant",
+    "delivery",
+    "mongodb"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "express": "^4.18.2",
-    "mongoose": "^8.0.3",
     "bcryptjs": "^2.4.3",
-    "jsonwebtoken": "^9.0.2",
     "cors": "^2.8.5",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.0.3"
   },
   "devDependencies": {
-    "nodemon": "^3.0.2"
+    "nodemon": "^3.1.10"
   }
 }
