@@ -12,7 +12,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
 async function loadFoods() {
     try {
-        const foods = await API.getFoods();
+        const response = await API.getFoods();
+        const foods = response.foods || response; // Handle both paginated and simple response
         
         if (foods.error) {
             console.error('Error loading foods:', foods.error);
@@ -38,7 +39,8 @@ async function handleSearch(e) {
     }
 
     try {
-        const foods = await API.getFoods({ search: searchTerm });
+        const response = await API.getFoods({ search: searchTerm });
+        const foods = response.foods || response; // Handle both paginated and simple response
         updateFoodDisplay(foods);
         
         // Update search result header if on search page
@@ -83,7 +85,8 @@ function updateFoodDisplay(foods) {
 
 async function loadFoodsByCategory(category) {
     try {
-        const foods = await API.getFoods({ category });
+        const response = await API.getFoods({ category });
+        const foods = response.foods || response; // Handle both paginated and simple response
         updateFoodDisplay(foods);
         
         // Update category header

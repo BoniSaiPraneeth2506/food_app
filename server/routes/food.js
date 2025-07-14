@@ -1,55 +1,91 @@
 const express = require('express');
-const { db } = require('../database/init');
+const FoodItem = require('../models/FoodItem');
 
 const router = express.Router();
 
-// Get all food items
-router.get('/', (req, res) => {
-    const { category, search } = req.query;
-    let query = 'SELECT * FROM food_items WHERE available = 1';
-    let params = [];
-
-    if (category) {
-        query += ' AND category = ?';
-        params.push(category);
-    }
-
-    if (search) {
-        query += ' AND (name LIKE ? OR description LIKE ?)';
-        params.push(`%${search}%`, `%${search}%`);
-    }
-
-    query += ' ORDER BY created_at DESC';
-
-    db.all(query, params, (err, foods) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
+// Get all food items with filtering and search
+router.get('/', async (req, res) => {
+    try {
+        const { category, search, page = 1, limit = 10, sort = 'createdAt' } = req.query;
+        
+        // Build query
+        let query = { available: true };
+        
+        if (category) {
+            query.category = category.toLowerCase();
         }
-        res.json(foods);
-    });
+        
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: 'i' } },
+                { description: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        // Execute query with pagination
+        const foods = await FoodItem.find(query)
+            .sort({ [sort]: -1 })
+            .limit(limit * 1)
+            .skip((page - 1) * limit)
+            .exec();
+
+        // Get total count for pagination
+        const total = await FoodItem.countDocuments(query);
+
+        res.json({
+            foods,
+            totalPages: Math.ceil(total / limit),
+            currentPage: page,
+            total
+        });
+    } catch (error) {
+        console.error('Error fetching foods:', error);
+        res.status(500).json({ error: 'Server error while fetching foods' });
+    }
 });
 
 // Get food by ID
-router.get('/:id', (req, res) => {
-    db.get('SELECT * FROM food_items WHERE id = ? AND available = 1', [req.params.id], (err, food) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
-        if (!food) {
+router.get('/:id', async (req, res) => {
+    try {
+        const food = await FoodItem.findById(req.params.id);
+        
+        if (!food || !food.available) {
             return res.status(404).json({ error: 'Food item not found' });
         }
+        
         res.json(food);
-    });
+    } catch (error) {
+        console.error('Error fetching food:', error);
+        if (error.name === 'CastError') {
+            return res.status(400).json({ error: 'Invalid food ID' });
+        }
+        res.status(500).json({ error: 'Server error while fetching food' });
+    }
 });
 
-// Get categories
-router.get('/categories/all', (req, res) => {
-    db.all('SELECT DISTINCT category FROM food_items WHERE available = 1', (err, categories) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
-        res.json(categories.map(cat => cat.category));
-    });
+// Get all categories
+router.get('/categories/all', async (req, res) => {
+    try {
+        const categories = await FoodItem.distinct('category', { available: true });
+        res.json(categories);
+    } catch (error) {
+        console.error('Error fetching categories:', error);
+        res.status(500).json({ error: 'Server error while fetching categories' });
+    }
+});
+
+// Get popular foods (highest rated)
+router.get('/popular/items', async (req, res) => {
+    try {
+        const popularFoods = await FoodItem.find({ available: true })
+            .sort({ rating: -1, reviews: -1 })
+            .limit(6);
+        
+        res.json(popularFoods);
+    } catch (error) {
+        console.error('Error fetching popular foods:', error);
+        res.status(500).json({ error: 'Server error while fetching popular foods' });
+    }
 });
 
 module.exports = router;

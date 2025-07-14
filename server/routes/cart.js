@@ -1,110 +1,147 @@
 const express = require('express');
-const { db } = require('../database/init');
+const Cart = require('../models/Cart');
+const FoodItem = require('../models/FoodItem');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Get cart items
-router.get('/', authenticateToken, (req, res) => {
-    const query = `
-        SELECT c.id, c.quantity, f.id as food_id, f.name, f.price, f.image, f.description
-        FROM cart c
-        JOIN food_items f ON c.food_id = f.id
-        WHERE c.user_id = ?
-        ORDER BY c.created_at DESC
-    `;
+router.get('/', authenticateToken, async (req, res) => {
+    try {
+        const cartItems = await Cart.find({ user: req.user.userId })
+            .populate('food', 'name price image description')
+            .sort({ createdAt: -1 });
 
-    db.all(query, [req.user.userId], (err, items) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
+        // Calculate totals
+        const total = cartItems.reduce((sum, item) => {
+            return sum + (item.food.price * item.quantity);
+        }, 0);
 
-        const total = items.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-        
+        const count = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+
+        // Format response
+        const items = cartItems.map(item => ({
+            id: item._id,
+            food_id: item.food._id,
+            name: item.food.name,
+            price: item.food.price,
+            image: item.food.image,
+            description: item.food.description,
+            quantity: item.quantity
+        }));
+
         res.json({
-            items: items,
+            items,
             total: total.toFixed(2),
-            count: items.reduce((sum, item) => sum + item.quantity, 0)
+            count
         });
-    });
+    } catch (error) {
+        console.error('Error fetching cart:', error);
+        res.status(500).json({ error: 'Server error while fetching cart' });
+    }
 });
 
 // Add item to cart
-router.post('/add', authenticateToken, (req, res) => {
-    const { foodId, quantity = 1 } = req.body;
+router.post('/add', authenticateToken, async (req, res) => {
+    try {
+        const { foodId, quantity = 1 } = req.body;
 
-    // Check if item already exists in cart
-    db.get('SELECT * FROM cart WHERE user_id = ? AND food_id = ?', [req.user.userId, foodId], (err, existingItem) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
+        // Validate food item exists
+        const food = await FoodItem.findById(foodId);
+        if (!food || !food.available) {
+            return res.status(404).json({ error: 'Food item not found or unavailable' });
         }
 
-        if (existingItem) {
+        // Check if item already exists in cart
+        const existingCartItem = await Cart.findOne({
+            user: req.user.userId,
+            food: foodId
+        });
+
+        if (existingCartItem) {
             // Update quantity
-            db.run(
-                'UPDATE cart SET quantity = quantity + ? WHERE user_id = ? AND food_id = ?',
-                [quantity, req.user.userId, foodId],
-                (err) => {
-                    if (err) {
-                        return res.status(500).json({ error: 'Failed to update cart' });
-                    }
-                    res.json({ message: 'Cart updated successfully' });
-                }
-            );
+            existingCartItem.quantity += parseInt(quantity);
+            await existingCartItem.save();
+            res.json({ message: 'Cart updated successfully' });
         } else {
-            // Add new item
-            db.run(
-                'INSERT INTO cart (user_id, food_id, quantity) VALUES (?, ?, ?)',
-                [req.user.userId, foodId, quantity],
-                (err) => {
-                    if (err) {
-                        return res.status(500).json({ error: 'Failed to add to cart' });
-                    }
-                    res.json({ message: 'Item added to cart successfully' });
-                }
-            );
+            // Create new cart item
+            const cartItem = new Cart({
+                user: req.user.userId,
+                food: foodId,
+                quantity: parseInt(quantity)
+            });
+            await cartItem.save();
+            res.json({ message: 'Item added to cart successfully' });
         }
-    });
+    } catch (error) {
+        console.error('Error adding to cart:', error);
+        if (error.name === 'CastError') {
+            return res.status(400).json({ error: 'Invalid food ID' });
+        }
+        res.status(500).json({ error: 'Server error while adding to cart' });
+    }
 });
 
 // Update cart item quantity
-router.put('/update/:id', authenticateToken, (req, res) => {
-    const { quantity } = req.body;
+router.put('/update/:id', authenticateToken, async (req, res) => {
+    try {
+        const { quantity } = req.body;
 
-    db.run(
-        'UPDATE cart SET quantity = ? WHERE id = ? AND user_id = ?',
-        [quantity, req.params.id, req.user.userId],
-        (err) => {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to update cart' });
-            }
-            res.json({ message: 'Cart updated successfully' });
+        if (!quantity || quantity < 1) {
+            return res.status(400).json({ error: 'Quantity must be at least 1' });
         }
-    );
+
+        const cartItem = await Cart.findOneAndUpdate(
+            { _id: req.params.id, user: req.user.userId },
+            { quantity: parseInt(quantity) },
+            { new: true }
+        );
+
+        if (!cartItem) {
+            return res.status(404).json({ error: 'Cart item not found' });
+        }
+
+        res.json({ message: 'Cart updated successfully' });
+    } catch (error) {
+        console.error('Error updating cart:', error);
+        if (error.name === 'CastError') {
+            return res.status(400).json({ error: 'Invalid cart item ID' });
+        }
+        res.status(500).json({ error: 'Server error while updating cart' });
+    }
 });
 
 // Remove item from cart
-router.delete('/remove/:id', authenticateToken, (req, res) => {
-    db.run(
-        'DELETE FROM cart WHERE id = ? AND user_id = ?',
-        [req.params.id, req.user.userId],
-        (err) => {
-            if (err) {
-                return res.status(500).json({ error: 'Failed to remove item' });
-            }
-            res.json({ message: 'Item removed successfully' });
+router.delete('/remove/:id', authenticateToken, async (req, res) => {
+    try {
+        const cartItem = await Cart.findOneAndDelete({
+            _id: req.params.id,
+            user: req.user.userId
+        });
+
+        if (!cartItem) {
+            return res.status(404).json({ error: 'Cart item not found' });
         }
-    );
+
+        res.json({ message: 'Item removed successfully' });
+    } catch (error) {
+        console.error('Error removing from cart:', error);
+        if (error.name === 'CastError') {
+            return res.status(400).json({ error: 'Invalid cart item ID' });
+        }
+        res.status(500).json({ error: 'Server error while removing from cart' });
+    }
 });
 
-// Clear cart
-router.delete('/clear', authenticateToken, (req, res) => {
-    db.run('DELETE FROM cart WHERE user_id = ?', [req.user.userId], (err) => {
-        if (err) {
-            return res.status(500).json({ error: 'Failed to clear cart' });
-        }
+// Clear entire cart
+router.delete('/clear', authenticateToken, async (req, res) => {
+    try {
+        await Cart.deleteMany({ user: req.user.userId });
         res.json({ message: 'Cart cleared successfully' });
-    });
+    } catch (error) {
+        console.error('Error clearing cart:', error);
+        res.status(500).json({ error: 'Server error while clearing cart' });
+    }
 });
 
 module.exports = router;

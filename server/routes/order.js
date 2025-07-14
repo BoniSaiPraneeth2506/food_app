@@ -1,126 +1,155 @@
 const express = require('express');
-const { db } = require('../database/init');
+const Order = require('../models/Order');
+const Cart = require('../models/Cart');
+const FoodItem = require('../models/FoodItem');
 const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Create order
-router.post('/create', authenticateToken, (req, res) => {
-    const { deliveryAddress, phone } = req.body;
+router.post('/create', authenticateToken, async (req, res) => {
+    try {
+        const { deliveryAddress, phone, notes, paymentMethod = 'cash' } = req.body;
 
-    // Get cart items
-    const cartQuery = `
-        SELECT c.quantity, f.id as food_id, f.price
-        FROM cart c
-        JOIN food_items f ON c.food_id = f.id
-        WHERE c.user_id = ?
-    `;
-
-    db.all(cartQuery, [req.user.userId], (err, cartItems) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
+        // Validation
+        if (!deliveryAddress || !phone) {
+            return res.status(400).json({ error: 'Delivery address and phone are required' });
         }
+
+        // Get cart items
+        const cartItems = await Cart.find({ user: req.user.userId })
+            .populate('food', 'name price image');
 
         if (cartItems.length === 0) {
             return res.status(400).json({ error: 'Cart is empty' });
         }
 
-        const totalAmount = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+        // Prepare order items
+        const orderItems = cartItems.map(item => ({
+            food: item.food._id,
+            name: item.food.name,
+            price: item.food.price,
+            quantity: item.quantity,
+            image: item.food.image
+        }));
+
+        // Calculate total
+        const totalAmount = orderItems.reduce((sum, item) => {
+            return sum + (item.price * item.quantity);
+        }, 0);
 
         // Create order
-        db.run(
-            'INSERT INTO orders (user_id, total_amount, delivery_address, phone) VALUES (?, ?, ?, ?)',
-            [req.user.userId, totalAmount, deliveryAddress, phone],
-            function(err) {
-                if (err) {
-                    return res.status(500).json({ error: 'Failed to create order' });
-                }
+        const order = new Order({
+            user: req.user.userId,
+            items: orderItems,
+            totalAmount,
+            deliveryAddress,
+            phone,
+            notes,
+            paymentMethod,
+            estimatedDeliveryTime: new Date(Date.now() + 45 * 60 * 1000) // 45 minutes from now
+        });
 
-                const orderId = this.lastID;
+        await order.save();
 
-                // Insert order items
-                const orderItemsQuery = 'INSERT INTO order_items (order_id, food_id, quantity, price) VALUES (?, ?, ?, ?)';
-                let completed = 0;
+        // Clear cart after successful order
+        await Cart.deleteMany({ user: req.user.userId });
 
-                cartItems.forEach(item => {
-                    db.run(orderItemsQuery, [orderId, item.food_id, item.quantity, item.price], (err) => {
-                        if (err) {
-                            return res.status(500).json({ error: 'Failed to create order items' });
-                        }
-
-                        completed++;
-                        if (completed === cartItems.length) {
-                            // Clear cart after successful order
-                            db.run('DELETE FROM cart WHERE user_id = ?', [req.user.userId], (err) => {
-                                if (err) {
-                                    console.error('Failed to clear cart:', err);
-                                }
-
-                                res.json({
-                                    message: 'Order created successfully',
-                                    orderId: orderId,
-                                    totalAmount: totalAmount.toFixed(2)
-                                });
-                            });
-                        }
-                    });
-                });
-            }
-        );
-    });
+        res.json({
+            message: 'Order created successfully',
+            orderId: order._id,
+            totalAmount: totalAmount.toFixed(2),
+            estimatedDeliveryTime: order.estimatedDeliveryTime
+        });
+    } catch (error) {
+        console.error('Error creating order:', error);
+        res.status(500).json({ error: 'Server error while creating order' });
+    }
 });
 
 // Get user orders
-router.get('/my-orders', authenticateToken, (req, res) => {
-    const query = `
-        SELECT o.*, 
-               GROUP_CONCAT(f.name || ' x' || oi.quantity) as items
-        FROM orders o
-        LEFT JOIN order_items oi ON o.id = oi.order_id
-        LEFT JOIN food_items f ON oi.food_id = f.id
-        WHERE o.user_id = ?
-        GROUP BY o.id
-        ORDER BY o.created_at DESC
-    `;
+router.get('/my-orders', authenticateToken, async (req, res) => {
+    try {
+        const { page = 1, limit = 10 } = req.query;
 
-    db.all(query, [req.user.userId], (err, orders) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
-        res.json(orders);
-    });
+        const orders = await Order.find({ user: req.user.userId })
+            .sort({ createdAt: -1 })
+            .limit(limit * 1)
+            .skip((page - 1) * limit)
+            .populate('items.food', 'name image');
+
+        // Format orders for frontend
+        const formattedOrders = orders.map(order => ({
+            id: order._id,
+            total_amount: order.totalAmount,
+            status: order.status,
+            delivery_address: order.deliveryAddress,
+            phone: order.phone,
+            created_at: order.createdAt,
+            estimatedDeliveryTime: order.estimatedDeliveryTime,
+            items: order.items.map(item => `${item.name} x${item.quantity}`).join(', ')
+        }));
+
+        res.json(formattedOrders);
+    } catch (error) {
+        console.error('Error fetching orders:', error);
+        res.status(500).json({ error: 'Server error while fetching orders' });
+    }
 });
 
 // Get order details
-router.get('/:id', authenticateToken, (req, res) => {
-    const orderQuery = 'SELECT * FROM orders WHERE id = ? AND user_id = ?';
-    const itemsQuery = `
-        SELECT oi.*, f.name, f.image
-        FROM order_items oi
-        JOIN food_items f ON oi.food_id = f.id
-        WHERE oi.order_id = ?
-    `;
-
-    db.get(orderQuery, [req.params.id, req.user.userId], (err, order) => {
-        if (err) {
-            return res.status(500).json({ error: 'Database error' });
-        }
+router.get('/:id', authenticateToken, async (req, res) => {
+    try {
+        const order = await Order.findOne({
+            _id: req.params.id,
+            user: req.user.userId
+        }).populate('items.food', 'name image');
 
         if (!order) {
             return res.status(404).json({ error: 'Order not found' });
         }
 
-        db.all(itemsQuery, [req.params.id], (err, items) => {
-            if (err) {
-                return res.status(500).json({ error: 'Database error' });
-            }
+        res.json(order);
+    } catch (error) {
+        console.error('Error fetching order:', error);
+        if (error.name === 'CastError') {
+            return res.status(400).json({ error: 'Invalid order ID' });
+        }
+        res.status(500).json({ error: 'Server error while fetching order' });
+    }
+});
 
-            res.json({
-                ...order,
-                items: items
-            });
+// Update order status (for admin or delivery tracking)
+router.put('/:id/status', authenticateToken, async (req, res) => {
+    try {
+        const { status } = req.body;
+        const validStatuses = ['pending', 'confirmed', 'preparing', 'ready', 'delivered', 'cancelled'];
+
+        if (!validStatuses.includes(status)) {
+            return res.status(400).json({ error: 'Invalid status' });
+        }
+
+        const order = await Order.findOneAndUpdate(
+            { _id: req.params.id, user: req.user.userId },
+            { status },
+            { new: true }
+        );
+
+        if (!order) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        res.json({
+            message: 'Order status updated successfully',
+            order
         });
-    });
+    } catch (error) {
+        console.error('Error updating order status:', error);
+        if (error.name === 'CastError') {
+            return res.status(400).json({ error: 'Invalid order ID' });
+        }
+        res.status(500).json({ error: 'Server error while updating order' });
+    }
 });
 
 module.exports = router;
